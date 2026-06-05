@@ -1,100 +1,166 @@
-﻿using System;
+using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Reflection;
 using System.Threading;
-using HarmonyLib;
-using Shared.Config;
-using Shared.Logging;
-using Shared.Patches;
-using Shared.Plugin;
-using VRage.FileSystem;
+using PluginSdk.Commands;
+using PluginSdk.Config;
+using PluginSdk.Logging;
 using VRage.Game;
+using VRage.Game.ModAPI;
 using VRage.Plugins;
 
 namespace ServerPlugin;
 
 // ReSharper disable once UnusedType.Global
-public class Plugin : IPlugin, ICommonPlugin
+public sealed class Plugin : IPlugin
 {
-    public const string Name = "PluginTemplate";
-    public static Plugin Instance { get; private set; }
-
-    public long Tick { get; private set; }
+    public const string Name = "GridBackups";
+    private const string ConfigFileName = Name + ".cfg";
     private static bool failed;
 
-    public IPluginLogger Log => Logger;
-    private static readonly IPluginLogger Logger = new PluginLogger(Name);
+    public static Plugin Instance { get; private set; }
 
-    public IPluginConfig Config => config?.Data;
-    private PersistentConfig<PluginConfig> config;
-    private static readonly string ConfigFileName = $"{Name}.cfg";
+    public Logger Log { get; } = Logger.Create(Name);
+    public GridBackupsConfig Config => configFile?.Data;
+    public GridBackupService Backups { get; private set; }
+    public string PluginDataPath { get; private set; }
+
+    private SdkConfigFile<GridBackupsConfig> configFile;
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     public void Init(object gameInstance)
     {
 #if DEBUG
-        // Allow the debugger some time to connect once the plugin assembly is loaded
         Thread.Sleep(100);
 #endif
 
         Instance = this;
-
         Log.Info("Loading");
 
-        var configPath = Path.Combine(MyFileSystem.UserDataPath, ConfigFileName);
-        config = PersistentConfig<PluginConfig>.Load(Log, configPath);
+        try
+        {
+            PluginDataPath = ResolvePluginDataPath();
+            configFile = SdkConfigFile<GridBackupsConfig>.Load(Log, Path.Combine(PluginDataPath, ConfigFileName));
+            Backups = new GridBackupService(this);
+            ServerCommands.Register(Assembly.GetExecutingAssembly(), typeof(GridBackupsCommands));
 
-        var gameVersion = MyFinalBuildConstants.APP_VERSION_STRING.ToString();
-        Common.SetPlugin(this, gameVersion, MyFileSystem.UserDataPath);
+            var schemaJson = ConfigStorage.SaveJson(Config);
+            File.WriteAllText(Path.Combine(PluginDataPath, Name + ".schema.json"), schemaJson);
 
-        if (!PatchHelpers.HarmonyPatchAll(Log, new Harmony(Name)))
+            Log.Info("Loaded", new { PluginDataPath, Backups.BackupRoot });
+        }
+        catch (Exception ex)
         {
             failed = true;
-            return;
+            Log.Critical("Failed to load", ex);
         }
-
-        Log.Debug("Successfully loaded");
     }
 
     public void Dispose()
     {
         try
         {
-            // TODO: Save state and close resources here, called when the game exists (not guaranteed!)
-            // IMPORTANT: Do NOT call harmony.UnpatchAll() here! It may break other plugins.
+            configFile?.Dispose();
         }
         catch (Exception ex)
         {
-            Log.Critical(ex, "Dispose failed");
+            Log.Critical("Dispose failed", ex);
         }
-
-        Instance = null;
+        finally
+        {
+            Instance = null;
+        }
     }
 
     public void Update()
     {
         if (failed)
             return;
-        
-#if DEBUG
-        CustomUpdate();
-        Tick++;
-#else        
+
         try
         {
-            CustomUpdate();
-            Tick++;
+            Backups?.Update();
         }
-        catch (Exception e)
+        catch (Exception ex)
         {
-            Log.Critical(e, "Update failed");
             failed = true;
+            Log.Critical("Update failed", ex);
         }
-#endif       
     }
 
-    private void CustomUpdate()
+    public bool BackupBeforeConcealment(List<MyObjectBuilder_CubeGrid> grids, long ownerIdentity)
+        => Backups?.BackupBeforeConcealment(grids, ownerIdentity) ?? false;
+
+    public bool BackupGridsManuallyWithBuilders(List<MyObjectBuilder_CubeGrid> grids, long ownerIdentity)
+        => Backups?.BackupExternalBuilders(grids, ownerIdentity, respectMinDelay: false) ?? false;
+
+    private static string ResolvePluginDataPath()
     {
-        // TODO: Put your update code here. It is called on every simulation frame!
-        PatchHelpers.PatchUpdates();
+        var root = ResolveQuasarRoot();
+        return Create(Path.Combine(root, Name));
+    }
+
+    private static string ResolveQuasarRoot()
+    {
+        var quasarRoot = Environment.GetEnvironmentVariable("QUASAR_DATA_DIR");
+        if (!string.IsNullOrWhiteSpace(quasarRoot))
+            return quasarRoot;
+
+        var dsConfig = Environment.GetEnvironmentVariable("QUASAR_DS_CONFIG_PATH");
+        var derived = TryGetQuasarRootFromPath(dsConfig);
+        if (derived != null)
+            return derived;
+
+        if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Quasar");
+
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "Quasar");
+    }
+
+    private static string Create(string path)
+    {
+        Directory.CreateDirectory(path);
+        return path;
+    }
+
+    private static string TryGetQuasarRootFromPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        var full = Path.GetFullPath(path);
+        var parts = full.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        for (var i = parts.Length - 1; i >= 0; i--)
+            if (string.Equals(parts[i], "Magnetars", StringComparison.OrdinalIgnoreCase))
+                return string.Join(Path.DirectorySeparatorChar.ToString(), parts.Take(i));
+
+        return null;
+    }
+}
+
+[CommandRoot("gridbackup", "Grid Backups", "grid backup tools")]
+public sealed class GridBackupsCommands : CommandModule
+{
+    [Command("run", "Starts a full backup scan now")]
+    [Permission(MyPromoteLevel.Admin)]
+    public string Run()
+    {
+        var plugin = Plugin.Instance;
+        if (plugin == null)
+            return "GridBackups is not loaded.";
+
+        return plugin.Backups.StartManualBackup()
+            ? "Backup creation started."
+            : "Backup could not start.";
+    }
+
+    [Command("status", "Shows backup service state")]
+    [Permission(MyPromoteLevel.Admin)]
+    public string Status()
+    {
+        var plugin = Plugin.Instance;
+        return plugin?.Backups.GetStatus() ?? "GridBackups is not loaded.";
     }
 }
