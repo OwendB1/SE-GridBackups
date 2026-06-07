@@ -15,7 +15,7 @@ using VRage.Utils;
 
 namespace ServerPlugin;
 
-public sealed class GridBackupService
+public sealed partial class GridBackupService
 {
     private const string DailyPrefix = "daily";
     private readonly Plugin plugin;

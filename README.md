@@ -19,8 +19,16 @@ Important options:
 
 ## Commands
 
+- `!gridbackup list <PlayerName|SteamID|IdentityID>` lists backed up grids for a player.
+- `!gridbackup list <PlayerName|SteamID|IdentityID> <GridName|GridID|ListNumber>` lists backup files for one grid.
+- `!gridbackup list faction <FactionTag>` lists backed up grids for a faction.
+- `!gridbackup find <GridName|GridID>` searches matching backed up grids across known owners.
+- `!gridbackup restore <PlayerName|SteamID|IdentityID> <GridName|GridID|ListNumber> [backupNumber] [keepOriginalPosition] [force]` restores a backup.
+- `!gridbackup restore faction <FactionTag> <GridName|GridID|ListNumber> [backupNumber] [keepOriginalPosition] [force]` restores from a faction member backup.
 - `!gridbackup run` starts a full backup scan.
 - `!gridbackup status` shows current backup service state.
+
+Restore defaults to the latest backup, spawning near the caller. Console restores must use `keepOriginalPosition=true`. Use `force=true` to skip the occupation check.
 
 ## External API
 

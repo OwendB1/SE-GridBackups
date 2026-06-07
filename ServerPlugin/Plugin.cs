@@ -8,7 +8,6 @@ using PluginSdk.Commands;
 using PluginSdk.Config;
 using PluginSdk.Logging;
 using VRage.Game;
-using VRage.Game.ModAPI;
 using VRage.Plugins;
 
 namespace ServerPlugin;
@@ -137,30 +136,5 @@ public sealed class Plugin : IPlugin
                 return string.Join(Path.DirectorySeparatorChar.ToString(), parts.Take(i));
 
         return null;
-    }
-}
-
-[CommandRoot("gridbackup", "Grid Backups", "grid backup tools")]
-public sealed class GridBackupsCommands : CommandModule
-{
-    [Command("run", "Starts a full backup scan now")]
-    [Permission(MyPromoteLevel.Admin)]
-    public string Run()
-    {
-        var plugin = Plugin.Instance;
-        if (plugin == null)
-            return "GridBackups is not loaded.";
-
-        return plugin.Backups.StartManualBackup()
-            ? "Backup creation started."
-            : "Backup could not start.";
-    }
-
-    [Command("status", "Shows backup service state")]
-    [Permission(MyPromoteLevel.Admin)]
-    public string Status()
-    {
-        var plugin = Plugin.Instance;
-        return plugin?.Backups.GetStatus() ?? "GridBackups is not loaded.";
     }
 }
