@@ -53,3 +53,7 @@ Build:
 ```bash
 dotnet build GridBackups.sln --configuration Debug
 ```
+
+Functionality is inspired by and reimplements the original Torch plugin
+GridBackup by LordTylus (license: Apache-2.0):
+https://github.com/LordTylus/SE-Torch-Plugin-ALE-GridBackup
