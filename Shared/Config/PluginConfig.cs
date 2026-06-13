@@ -1,5 +1,3 @@
-#if !TORCH
-
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
@@ -49,5 +47,3 @@ public class PluginConfig : IPluginConfig
 
     // TODO: Encapsulate your config fields as properties here
 }
-
-#endif
